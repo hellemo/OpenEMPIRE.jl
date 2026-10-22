@@ -319,7 +319,7 @@ silently building free converters.
 """
 function offshore_conv_investment_expr(emp::JuMP.AbstractModel, sets, par, sp)
     hubs = offshore_energy_hubs(sets)
-    isempty(hubs) && return zero(JuMP.AffExpr)
+    isempty(hubs) && return _zero_expr(emp)
     cost = offshore_conv_invest_cost(par, sp)
     if cost === nothing
         @warn(
@@ -328,10 +328,10 @@ function offshore_conv_investment_expr(emp::JuMP.AbstractModel, sets, par, sp)
             "free. Add the cost table, or remove the hubs from Sets/OffshoreEnergyHub.csv.",
             maxlog = 1,
         )
-        return zero(JuMP.AffExpr)
+        return _zero_expr(emp)
     end
     convInv = emp[:offshoreConvInvCap]
-    return sum(cost * convInv[n, sp] for n in hubs; init = zero(JuMP.AffExpr))
+    return sum(cost * convInv[n, sp] for n in hubs; init = _zero_expr(emp))
 end
 
 function duration_aggr(sp, spp, strat_periods)
@@ -801,7 +801,7 @@ function create_emission_constraints(
                     for (scenario_index, scenario) in enumerate(opscenarios(rp))
                     if scenario_index == sc
                     for t in scenario;
-                    init = JuMP.AffExpr(0.0),
+                    init = _zero_expr(emp),
                 ) : 0.0)
     )
 
@@ -826,26 +826,26 @@ function objective_component_expressions(emp::JuMP.AbstractModel, sets, par, per
     hydrogen_costs = has_hydrogen(sets) ?
                      hydrogen_objective_expressions(emp, sets, par, periods, discounter) :
                      (
-        investment = JuMP.AffExpr(0.0),
-        terminal_import = JuMP.AffExpr(0.0),
-        reformer_operation = JuMP.AffExpr(0.0),
-        transport_shedding = JuMP.AffExpr(0.0),
+        investment = _zero_expr(emp),
+        terminal_import = _zero_expr(emp),
+        reformer_operation = _zero_expr(emp),
+        transport_shedding = _zero_expr(emp),
     )
     industry_costs = has_industry(sets) ?
                      industry_objective_expressions(emp, sets, par, periods, discounter) :
                      (
-        investment = JuMP.AffExpr(0.0),
-        steel_operation = JuMP.AffExpr(0.0),
-        cement_operation = JuMP.AffExpr(0.0),
-        ammonia_operation = JuMP.AffExpr(0.0),
-        refinery_shedding = JuMP.AffExpr(0.0),
+        investment = _zero_expr(emp),
+        steel_operation = _zero_expr(emp),
+        cement_operation = _zero_expr(emp),
+        ammonia_operation = _zero_expr(emp),
+        refinery_shedding = _zero_expr(emp),
     )
 
     # `total += coef * var` rebuilds the whole expression each iteration, making an
     # n-term sum O(n^2) in both time and allocation. `add_to_expression!` appends in
     # place. Measured on 432 terms: 465 us / 9.74 MiB versus 9.5 us / 25.7 KiB.
     function generator_investment_expr(sp)
-        total = JuMP.AffExpr(0.0)
+        total = _zero_expr(emp)
         for n in N, g in generators(sets, n)
             JuMP.add_to_expression!(total, gen_invest_cost(par, g, sp), genInvCap[n, g, sp])
         end
@@ -853,7 +853,7 @@ function objective_component_expressions(emp::JuMP.AbstractModel, sets, par, per
     end
 
     function storage_investment_expr(sp)
-        total = JuMP.AffExpr(0.0)
+        total = _zero_expr(emp)
         for n in N, s in storages(sets, n)
             JuMP.add_to_expression!(total, stor_pw_invest_cost(par, s, sp), storInvCapPow[n, s, sp])
             JuMP.add_to_expression!(total, stor_en_invest_cost(par, s, sp), storInvCapEn[n, s, sp])
@@ -862,7 +862,7 @@ function objective_component_expressions(emp::JuMP.AbstractModel, sets, par, per
     end
 
     function generator_operation_expr(t)
-        total = JuMP.AffExpr(0.0)
+        total = _zero_expr(emp)
         for n in N, g in generators(sets, n)
             JuMP.add_to_expression!(total, gen_marginal_cost(par, g, t), genOp[n, g, t])
         end
@@ -873,7 +873,7 @@ function objective_component_expressions(emp::JuMP.AbstractModel, sets, par, per
     # left, so every step copies the accumulated expression; over all operational
     # periods that dominated the post-solve diagnostics. Accumulate in place.
     function accumulate_strategic(term)
-        total = JuMP.AffExpr(0.0)
+        total = _zero_expr(emp)
         for sp in SP
             JuMP.add_to_expression!(total, objective_weight(sp, discounter), term(sp))
         end
@@ -881,7 +881,7 @@ function objective_component_expressions(emp::JuMP.AbstractModel, sets, par, per
     end
 
     function accumulate_operational(term)
-        total = JuMP.AffExpr(0.0)
+        total = _zero_expr(emp)
         for t in periods
             JuMP.add_to_expression!(
                 total,
@@ -893,7 +893,7 @@ function objective_component_expressions(emp::JuMP.AbstractModel, sets, par, per
     end
 
     function transmission_investment_expr(sp)
-        total = JuMP.AffExpr(0.0)
+        total = _zero_expr(emp)
         for (m, n) in bidir_arcs(sets)
             JuMP.add_to_expression!(total, trans_invest_cost(par, m, n, sp), transInvCap[m, n, sp])
         end
@@ -901,7 +901,7 @@ function objective_component_expressions(emp::JuMP.AbstractModel, sets, par, per
     end
 
     function load_shedding_expr(t)
-        total = JuMP.AffExpr(0.0)
+        total = _zero_expr(emp)
         for n in N
             JuMP.add_to_expression!(total, lost_load_cost(par, n, t), shed[n, t])
         end
@@ -935,3 +935,8 @@ function objective_component_values(emp::JuMP.AbstractModel, sets, par, periods:
     expressions = objective_component_expressions(emp, sets, par, periods, discounter)
     return map(JuMP.value, expressions)
 end
+
+# A zero affine expression in `emp`'s variable type, so that the model can also be
+# built into a model whose variables are not `JuMP.VariableRef` (e.g. a
+# TimeStructDecomposition.DecompositionModel).
+_zero_expr(emp) = zero(JuMP.GenericAffExpr{Float64,JuMP.variable_ref_type(emp)})
