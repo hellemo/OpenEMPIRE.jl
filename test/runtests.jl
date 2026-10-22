@@ -183,4 +183,5 @@ end
 
 @testset "Solve" begin
     test_solve()
+    test_model_factory()
 end

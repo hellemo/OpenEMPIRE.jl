@@ -214,6 +214,12 @@ Build an EMPIRE model from configuration and input data. Set
 `include_investment_constraints = false` for out-of-sample evaluation after
 strategic capacities from a completed investment run will be fixed on the
 model.
+
+`model_factory`, if given, is called as `model_factory(periods)` with the model's
+`TimeStruct` periods and returns the model to build into instead of a new
+`JuMP.Model` (`optimizer` and `optimizer_attributes` are then not used). It may
+return any `JuMP.AbstractModel`, for example a decomposition model;
+`include_string_names` applies only to a `JuMP.GenericModel`.
 """
 function create_model(
     config_file,
@@ -225,6 +231,7 @@ function create_model(
     input_format = :auto,
     scenario_rng = Random.default_rng(),
     progress = nothing,
+    model_factory = nothing,
 )
     config, periods, sets, params = _prepare_model_inputs(
         config_file,
@@ -276,12 +283,15 @@ function create_model(
     end
 
     _report_progress(progress, "Build 9/12: initializing JuMP model")
-    emp = if isnothing(optimizer)
+    # `model_factory(periods)` builds the model instead, e.g. a decomposition model.
+    emp = if !isnothing(model_factory)
+        model_factory(periods)
+    elseif isnothing(optimizer)
         JuMP.Model()
     else
         JuMP.direct_model(_optimizer_with_attributes(optimizer, optimizer_attributes))
     end
-    set_string_names_on_creation(emp, include_string_names)
+    emp isa JuMP.GenericModel && set_string_names_on_creation(emp, include_string_names)
     _report_progress(progress, "Build 10/12: creating variables")
     @time OpenEMPIRE.create_variables(
         emp,
